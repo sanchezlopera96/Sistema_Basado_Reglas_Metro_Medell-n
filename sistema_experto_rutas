@@ -1,0 +1,116 @@
+from experta import *
+
+class Ruta(Fact):
+    """ Representa una ruta entre dos estaciones """
+    origen = Field(str, mandatory=True)
+    destino = Field(str, mandatory=True)
+    transporte = Field(str, mandatory=True)
+    tiempo = Field(int, mandatory=True)
+    transbordo = Field(bool, default=False)
+
+class SistemaExpertoRutas(KnowledgeEngine):
+
+    def __init__(self):
+        super().__init__()
+        self.mejor_ruta = []
+        self.tiempo_total = float('inf')
+        self.transbordos_total = float('inf')
+        self.ruta_actual = []
+        self.tiempo_actual = 0
+        self.transbordos_actual = 0
+        self.origen = ""
+        self.destino = ""
+        self.rutas_visitadas = set()
+
+    @DefFacts()
+    def _initial_action(self):
+        print(f"Buscando ruta desde {self.origen} hasta {self.destino}...")
+        yield Fact(ubicacion=self.origen, ruta_actual=[], tiempo_actual=0, transbordos_actual=0, visitadas=set([self.origen]))
+
+    @Rule(Fact(ubicacion=MATCH.lugar),
+          AS.r << Ruta(origen=MATCH.lugar, destino=MATCH.siguiente, transporte=MATCH.medio, tiempo=MATCH.t))
+    def encontrar_conexion(self, lugar, siguiente, medio, t, r):
+        destino = self.destino  
+        if siguiente != destino and siguiente not in self.lookup('visitadas'):
+            ruta_nueva = list(self.lookup('ruta_actual')) + [{'origen': lugar, 'destino': siguiente, 'transporte': medio, 'tiempo': t, 'transbordo': False}]
+            tiempo_nuevo = self.lookup('tiempo_actual') + t
+            transbordos_nuevo = self.lookup('transbordos_actual')
+            visitadas_nuevo = set(self.lookup('visitadas'))
+            visitadas_nuevo.add(siguiente)
+            self.declare(Fact(ubicacion=siguiente, ruta_actual=ruta_nueva, tiempo_actual=tiempo_nuevo, transbordos_actual=transbordos_nuevo, visitadas=visitadas_nuevo))
+
+    @Rule(Fact(ubicacion=MATCH.lugar),
+          AS.r << Ruta(destino=MATCH.lugar, origen=MATCH.anterior, transporte=MATCH.medio, tiempo=MATCH.t))
+    def encontrar_conexion_inversa(self, lugar, anterior, medio, t, r):
+        destino = self.destino  
+        if anterior != destino and anterior not in self.lookup('visitadas'):
+            ruta_nueva = list(self.lookup('ruta_actual')) + [{'origen': lugar, 'destino': anterior, 'transporte': medio, 'tiempo': t, 'transbordo': False}]
+            tiempo_nuevo = self.lookup('tiempo_actual') + t
+            transbordos_nuevo = self.lookup('transbordos_actual')
+            visitadas_nuevo = set(self.lookup('visitadas'))
+            visitadas_nuevo.add(anterior)
+            self.declare(Fact(ubicacion=anterior, ruta_actual=ruta_nueva, tiempo_actual=tiempo_nuevo, transbordos_actual=transbordos_nuevo, visitadas=visitadas_nuevo))
+
+    @Rule(Fact(ubicacion=MATCH.lugar),
+          AS.r1 << Ruta(origen=MATCH.lugar, destino=MATCH.transbordo_a, transporte=MATCH.medio1, tiempo=MATCH.t1),
+          AS.r2 << Ruta(origen=MATCH.transbordo_b, destino=MATCH.siguiente, transporte=MATCH.medio2, tiempo=MATCH.t2),
+          TEST(lambda transbordo_a, transbordo_b: transbordo_a == transbordo_b))
+    def encontrar_transbordo(self, lugar, transbordo_a, siguiente, medio1, medio2, t1, t2, r1, r2):
+        destino = self.destino 
+        if siguiente != destino and siguiente not in self.lookup('visitadas'):
+            ruta_nueva = list(self.lookup('ruta_actual')) + [{'origen': lugar, 'destino': transbordo_a, 'transporte': medio1, 'tiempo': t1, 'transbordo': False},
+                                                          {'origen': transbordo_a, 'destino': siguiente, 'transporte': medio2, 'tiempo': t2, 'transbordo': True}]
+            tiempo_nuevo = self.lookup('tiempo_actual') + t1 + t2
+            transbordos_nuevo = self.lookup('transbordos_actual') + 1
+            visitadas_nuevo = set(self.lookup('visitadas'))
+            visitadas_nuevo.add(transbordo_a)
+            visitadas_nuevo.add(siguiente)
+            self.declare(Fact(ubicacion=siguiente, ruta_actual=ruta_nueva, tiempo_actual=tiempo_nuevo, transbordos_actual=transbordos_nuevo, visitadas=visitadas_nuevo))
+
+    @Rule(Fact(ubicacion=MATCH.lugar, ruta_actual=MATCH.ruta, tiempo_actual=MATCH.tiempo, transbordos_actual=MATCH.transbordos))
+    def ruta_encontrada(self, lugar, ruta, tiempo, transbordos):
+        destino = self.destino
+        tiempo_total_actual = self.tiempo_total
+        transbordos_total_actual = self.transbordos_total
+        if lugar == destino and (tiempo < tiempo_total_actual or (tiempo == tiempo_total_actual and transbordos < transbordos_total_actual)):
+            print(f"¡Ruta encontrada! Tiempo: {tiempo}, Transbordos: {transbordos}")
+            self.mejor_ruta = ruta
+            self.tiempo_total = tiempo
+            self.transbordos_total = transbordos
+
+    def buscar_mejor_ruta(self, origen, destino):
+        """ Ejecuta el motor de inferencia para encontrar la mejor ruta """
+        self.reset()
+        self.mejor_ruta = []
+        self.tiempo_total = float('inf')
+        self.transbordos_total = float('inf')
+        self.origen = origen
+        self.destino = destino
+
+        estaciones_metro_a = ["La Estrella", "Sabaneta", "Itagüí", "Envigado", "Ayurá", "Poblado", "Aguacatala", "Industriales", "Exposiciones", "Alpujarra", "San Antonio", "Parque Berrío", "Prado", "Hospital", "Universidad", "Caribe", "Tricentenario", "Acevedo", "Madera", "Bello", "Niquía"]
+        for i in range(len(estaciones_metro_a) - 1):
+            self.declare(Ruta(origen=estaciones_metro_a[i], destino=estaciones_metro_a[i+1], transporte="Metro línea A", tiempo=3))
+            self.declare(Ruta(origen=estaciones_metro_a[i+1], destino=estaciones_metro_a[i], transporte="Metro línea A", tiempo=3))
+
+        estaciones_metro_b = ["San Antonio", "Cisneros", "Suramericana", "Estadio", "Floresta", "Santa Lucía", "San Javier"]
+        for i in range(len(estaciones_metro_b) - 1):
+            self.declare(Ruta(origen=estaciones_metro_b[i], destino=estaciones_metro_b[i+1], transporte="Metro línea B", tiempo=3))
+            self.declare(Ruta(origen=estaciones_metro_b[i+1], destino=estaciones_metro_b[i], transporte="Metro línea B", tiempo=3))
+
+        self.run()
+
+        if self.mejor_ruta:
+            print(f"Inicio en {self.mejor_ruta[0]['origen']}")
+            for i, ruta in enumerate(self.mejor_ruta):
+                print(f"Tomar {ruta['transporte']} desde {ruta['origen']} hasta {ruta['destino']} ({ruta['tiempo']} min)")
+                if ruta['transbordo']:
+                    print(f"Realizar transbordo en {ruta['destino']}")
+            print(f"Tiempo total: {self.tiempo_total} min, Transbordos: {self.transbordos_total}")
+        else:
+            print("No se encontró una ruta válida.")
+
+iestacion_inicio = input("Ingrese la estación de inicio: ")
+iestacion_destino = input("Ingrese la estación de destino: ")
+
+sistema = SistemaExpertoRutas()
+sistema.buscar_mejor_ruta(iestacion_inicio, iestacion_destino)
